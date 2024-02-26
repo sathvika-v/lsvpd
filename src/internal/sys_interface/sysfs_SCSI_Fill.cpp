@@ -788,6 +788,7 @@ namespace lsvpd
 		Logger log;
 		string tmpStr, lvd;
 
+		cout << "interpreting pageCode: " << pageCode << endl;
 		if (pageCode == 199) {
 			/* pagecode = 0xc7 */
 			ds = make_full_scsi_ds(fillMe, "scsi", subtype, data, dataSize);
@@ -1380,6 +1381,7 @@ namespace lsvpd
 		if (len > 0) {
 			for (int i = 4; i < len; ++i) {
 				int byteValue = (int)buffer[i];
+				printf("byte[%d]: %d\n", i, byteValue);
 				byteValues.push_back(byteValue);
 			}
 		}
@@ -1429,6 +1431,7 @@ namespace lsvpd
 			for (int i = 0; i < num; i++) {
 				pageTemp = retrievePageTemplate(devTemplate->format_str, i);
 				retrievePageCode(pageTemp, pageCode, pageFormat);
+				cout << "Retrieved pageCode: " << pageCode << endl;
 
 				if( pageCode == "DIAG" )
 				{
@@ -1445,9 +1448,11 @@ namespace lsvpd
 						evpd = 0;
 					else evpd = 1;
 
-					if (std::find(byteValues.begin(), byteValues.end(), pageCodeInt) != byteValues.end())
+					if (std::find(byteValues.begin(), byteValues.end(), pageCodeInt) != byteValues.end()) {
+						cout << "pagecode: DIAG doing doSGQuery() for pageCodeInt: " << pageCodeInt << endl;
 						len = doSGQuery( device_fd, buffer, MAXBUFSIZE, evpd,
 								 pageCodeInt, RECEIVE_DIAGNOSTIC );
+					}
 				}
 				else
 				{
@@ -1465,8 +1470,10 @@ namespace lsvpd
 					// Query this page
 					memset(buffer, '\0', MAXBUFSIZE);
 					//					coutd << "Attempting query, evpd = " << evpd << ", pageCodeInt = " << pageCodeInt <<endl;
-					if (std::find(byteValues.begin(), byteValues.end(), pageCodeInt) != byteValues.end())
+					if (std::find(byteValues.begin(), byteValues.end(), pageCodeInt) != byteValues.end()) {
+						cout << "doSGQuery() for pageCodeInt: " << pageCodeInt << endl;
 						len = doSGQuery(device_fd, buffer, MAXBUFSIZE, evpd, pageCodeInt, 0);
+					}
 				}
 
 				if (len < 0) {
@@ -1488,9 +1495,10 @@ namespace lsvpd
 				 printf("\n");*/
 
 				//Interpret only the pages that are supported
-				if (std::find(byteValues.begin(), byteValues.end(), pageCodeInt) != byteValues.end())
+				if (std::find(byteValues.begin(), byteValues.end(), pageCodeInt) != byteValues.end()) {
 					interpretPage(fillMe, buffer, len, pageCodeInt, &pageFormat,
 						      subtype, &subtypeDS);
+				}
 			}
 		}
 
