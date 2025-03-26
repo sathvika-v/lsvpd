@@ -100,6 +100,7 @@ namespace lsvpd
 			Component *fillByBus(const string& bus, Component* fillMe);
 			Component *fillByDevClass(const string& devClass,
 				Component* fillMe);
+			void fillSpyreVpd(Component* fillMe);
 
 			/**
 			 * Single arg fillComp() is used to fill those devices discovered
@@ -139,7 +140,7 @@ namespace lsvpd
 			void process_template(Component *fillMe, string *deviceType,
 									char *data, int dataSize, string *format,
 									int pageCode);
-			void fillSpyreVpd(Component* fillMe);
+			//void fillSpyreVpd(Component* fillMe);
 			int collectNvmeVpd(Component *fillMe, int device_fd);
 
 			int collectVpd(Component *fillMe, int device_fd, bool limitSCSISize);

@@ -53,6 +53,7 @@
 #include <gatherer.hpp>
 #include <devicetreecollector.hpp>
 #include <platformcollector.hpp>
+#include <sysfstreecollector.hpp>
 
 using namespace lsvpd;
 using namespace std;
@@ -78,12 +79,101 @@ VpdDbEnv::UpdateLock *dblock;
 
 string env = DB_DIR, file = DB_FILENAME;
 
+/**
+ * Update VPD information for a specific Spyre device by PCI address
+ */
+int updateSpyreDevice(const string& pciAddress)
+{
+    int ret = 0;
+    VpdDbEnv::UpdateLock* lock = nullptr;
+    VpdDbEnv* db = nullptr;
+    
+    try {
+        // Get the path to the device in sysfs
+        string sysfsPath = "/sys/bus/pci/devices/" + pciAddress;
+        
+        // Check if the device exists
+        struct stat st;
+        if (stat(sysfsPath.c_str(), &st) != 0) {
+            Logger l;
+            l.log("Device " + pciAddress + " not found in sysfs", LOG_ERR);
+            return -1;
+        }
+
+        // Initialize the database with a lock
+        if (ensureEnv(env, file) != 0)
+            return -1;
+        
+        string fullPath = env + "/" + file;
+        lock = new VpdDbEnv::UpdateLock(env, file, false);
+        dblock = lock;
+
+        // Initialize VPD database
+        ret = __lsvpdInit(lock);
+        if (ret != 0) {
+            Logger l;
+            l.log("Could not allocate memory for the VPD database.", LOG_ERR);
+            return ret;
+        }
+
+        // Create a component for the device
+        Component* spyreComponent = new Component();
+        if (!spyreComponent) {
+            Logger l;
+            l.log("Failed to create component for Spyre device.", LOG_ERR);
+            return -1;
+        }
+
+        SysFSTreeCollector collector(false);
+        // Fill the Spyre VPD information
+        collector.fillSpyreVpd(spyreComponent);
+        
+        // db should be initialized by __lsvpdInit, but let's ensure it's not null
+        if (db == nullptr) {
+            Logger l;
+            l.log("VPD database was not properly initialized.", LOG_ERR);
+            return -1;
+        }        
+
+        // Store the component in the database
+        if (!db->store(spyreComponent)) {
+            Logger l;
+            l.log("Failed to store Spyre device information in database.", LOG_ERR);
+            delete spyreComponent;
+            return -3;
+        }
+        
+        Logger l;
+        l.log("Successfully updated VPD for Spyre device " + pciAddress, LOG_NOTICE);
+        
+        delete spyreComponent;
+        return 0;
+    }
+    catch (const VpdException& ve) {
+        Logger l;
+        l.log(string("VPD Exception: ") + ve.what(), LOG_ERR);
+        return -4;
+    }
+    catch (const std::exception& e) {
+        Logger l;
+        l.log(string("Exception: ") + e.what(), LOG_ERR);
+        return -5;
+    }
+    catch (...) {
+        Logger l;
+        l.log("Unknown exception occurred", LOG_ERR);
+        return -6;
+    }
+}
+
 int main( int argc, char** argv )
 {
-	char opts [] = "vahsp:";
+	char opts [] = "vahsp:d:";
 	bool done = false;
 	int index = 0, rc = 1;
 	bool limitSCSISize = false;
+	bool updateSingleDevice = false;
+	string devicePciAddress = "";
 	VpdDbEnv::UpdateLock *lock;
 	string platform = PlatformCollector::get_platform_name();
 
@@ -124,6 +214,11 @@ int main( int argc, char** argv )
 			limitSCSISize = true;
 			break;
 
+        	case 'd':
+            		updateSingleDevice = true;
+            		devicePciAddress = optarg;
+            		break;
+
 		case 'v':
 			printVersion( );
 			return 0;
@@ -153,9 +248,13 @@ int main( int argc, char** argv )
 
 	Logger l;
 
-	l.log( "vpdupdate: Constructing full devices database", LOG_NOTICE );
-	rc = initializeDB( limitSCSISize );
-
+    if (updateSingleDevice) {
+        l.log("vpdupdate: Updating Spyre device " + devicePciAddress, LOG_NOTICE);
+        rc = updateSpyreDevice(devicePciAddress);
+    } else {
+        l.log("vpdupdate: Constructing full devices database", LOG_NOTICE);
+        rc = initializeDB(limitSCSISize);
+    }
 	__lsvpdFini();
 	return rc;
 }
@@ -547,6 +646,7 @@ void printUsage( )
 	cout << " --path=PATH, -pPATH Sets the path to the vpd db to PATH" << endl;
 	cout << " --archive,   -a     Archives the current VPD database" << endl;
 	cout << " --scsi,      -s     Limit size of SCSI device inquiry to 36 bytes" << endl;
+	cout << "\t-d, --device <pci_address>\tUpdate only the specified Spyre device" << endl;
 }
 
 void printVersion( )
