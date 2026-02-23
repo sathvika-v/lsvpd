@@ -51,6 +51,7 @@
 #include <cerrno>
 #include <iomanip>
 #include <limits.h>
+#include <syslog.h>
 
 /* Firmware information device tree node on PowerNV system */
 #define FW_VERSION_DT_NODE DEVTREEPATH"/ibm,firmware-versions/"
@@ -131,27 +132,36 @@ static string bmc_get_fw_fru_info(string ipmitool, string interface)
 	string fruData, fwData;
 	size_t start, end;
 
-	if (HelperFunctions::execCmd(cmd.c_str(), fruData))
+	if (HelperFunctions::execCmd(cmd.c_str(), fruData)) {
+		Logger().log("lsmcode: ipmitool command failed: " + cmd, LOG_ERR);
 		return string();
+	}
 
 	start = fruData.find("System Firmware");
-	if (start == string::npos)
-		goto parse_err;
+	if (start == string::npos) {
+		Logger().log("lsmcode: 'System Firmware' section not found in ipmitool fru output"
+			     " (interface: " + interface + ")", LOG_WARNING);
+		return string();
+	}
 
 	/* Discard header */
 	start = fruData.find("\n", start);
-	if (start == string::npos)
-		goto parse_err;
+	if (start == string::npos) {
+		Logger().log("lsmcode: failed to find newline after 'System Firmware' header"
+			     " (interface: " + interface + ")", LOG_WARNING);
+		return string();
+	}
 
 	end = fruData.find("FRU Device Description", start);
-	if (end == string::npos)
-		goto parse_err;
+	if (end == string::npos) {
+		Logger().log("lsmcode: failed to find 'FRU Device Description' boundary"
+			     " while parsing ipmitool output"
+			     " (interface: " + interface + ")", LOG_WARNING);
+		return string();
+	}
 
 	fwData = fruData.substr(start, end - start - 1);
 	return fwData;
-
-parse_err:
-	return string();
 }
 
 static string read_dt_property(const string& path, const string& attrName)
@@ -219,8 +229,10 @@ static string bmc_get_fw_dt_info(void)
 
 	pDBdir = opendir(FW_VERSION_DT_NODE);
 	if (pDBdir == NULL) {
+		int saved_errno = errno;
 		stringstream os;
-		os << "Error opening directory " << FW_VERSION_DT_NODE << endl;
+		os << "lsmcode: error opening firmware DT directory "
+		   << FW_VERSION_DT_NODE << ": " << strerror(saved_errno);
 		Logger().log(os.str( ), LOG_ERR);
 		return string("");
 	}
@@ -316,10 +328,21 @@ bool printSystem( const vector<Component*>& leaves )
 	if (PlatformCollector::isBMCBasedSystem()) {
 		string fwData;
 		if (!access(FW_VERSION_DT_NODE, F_OK | R_OK)) {
+			if (debug)
+				Logger().log("lsmcode: reading firmware info from DT node: "
+					     + string(FW_VERSION_DT_NODE), LOG_INFO);
 			fwData = bmc_get_fw_dt_info();
-			if (fwData.empty())
+			if (fwData.empty()) {
+				Logger().log("lsmcode: bmc_get_fw_dt_info returned no data"
+					     " from " + string(FW_VERSION_DT_NODE), LOG_ERR);
 				return false;
+			}
 		} else {
+			int saved_errno = errno;
+			if (debug)
+				Logger().log("lsmcode: DT node " + string(FW_VERSION_DT_NODE) +
+					     " not accessible (" + strerror(saved_errno) +
+					     "), falling back to ipmitool", LOG_INFO);
 			string ipmitool = get_ipmitool_path();
 			if (ipmitool.empty())
 				return false;
@@ -330,10 +353,14 @@ bool printSystem( const vector<Component*>& leaves )
 			 */
 			fwData = bmc_get_fw_fru_info(ipmitool, string(" -I usb fru"));
 			if (fwData.empty()) {
+				if (debug)
+					Logger().log("lsmcode: USB ipmitool interface failed,"
+						     " retrying with in-band interface", LOG_INFO);
 				fwData = bmc_get_fw_fru_info(ipmitool, string(" fru"));
 				if (fwData.empty()) {
-					cerr << "Failed to get System Firmware \
-						information" << endl;
+					Logger().log("lsmcode: all ipmitool interfaces failed,"
+						     " cannot retrieve system firmware info", LOG_ERR);
+					cerr << "Failed to get System Firmware information" << endl;
 					return false;
 				}
 			}
@@ -574,6 +601,9 @@ int main( int argc, char** argv )
 	VpdRetriever* vpd = NULL;
 	int index, first = 1;
 	int rc = 1;
+
+	openlog("lsmcode", LOG_PID | LOG_NDELAY, LOG_USER);
+
 	string platform = PlatformCollector::get_platform_name();
 
 	switch (PlatformCollector::platform_type) {
@@ -581,8 +611,10 @@ int main( int argc, char** argv )
 		rc = 0;
 	case PF_NULL:	/* Fall through */
 	case PF_ERROR:
+		Logger().log("lsmcode: unsupported platform detected: " + platform, LOG_ERR);
 		cout<< "lsmcode is not supported on the "
 			<< platform << " platform" << endl;
+		closelog();
 		return rc;
 	default:
 		;
@@ -601,7 +633,9 @@ int main( int argc, char** argv )
 	};
 
 	if (geteuid() != 0) {
+		Logger().log("lsmcode: must be run as root (euid=" + to_string(geteuid()) + ")", LOG_ERR);
 		cout << "Must be run as root!" << endl;
+		closelog();
 		return -1;
 	}
 
@@ -672,12 +706,20 @@ int main( int argc, char** argv )
 		string env, db;
 		int index;
 
+		if( debug )
+			Logger().log("lsmcode: using " + string(compressed ? "compressed " : "") +
+				     "DB path: " + path, LOG_INFO);
+
 		if( compressed )
 		{
 			gzFile gzf = gzopen( path.c_str( ), "rb" );
 			if( gzf == NULL )
 			{
+				int saved_errno = errno;
+				Logger().log("lsmcode: gzopen failed for " + path +
+					     ": " + strerror(saved_errno), LOG_ERR);
 				cout << "Failed to open database archive " << path << endl;
+				closelog();
 				return 1;
 			}
 
@@ -687,9 +729,13 @@ int main( int argc, char** argv )
 				       S_IRGRP | S_IWUSR | S_IRUSR | S_IROTH );
 			if( fd < 0 )
 			{
+				int saved_errno = errno;
 				gzclose( gzf );
+				Logger().log("lsmcode: open failed for decompressed DB " + path +
+					     ": " + strerror(saved_errno), LOG_ERR);
 				cout << "Failed to open file for uncompressed database archive"
 					<< endl;
+				closelog();
 				return 1;
 			}
 
@@ -710,8 +756,12 @@ int main( int argc, char** argv )
 			if( gzclose( gzf ) != 0 )
 			{
 				int err;
+				const char *gzerr = gzerror( gzf, &err );
+				Logger().log("lsmcode: gzclose/read error on " + path +
+					     ".gz: " + string(gzerr), LOG_ERR);
 				cout << "Error reading archive " << path << ".gz: " <<
-					gzerror( gzf, &err ) << endl;
+					gzerr << endl;
+				closelog();
 				return 1;
 			}
 		}
@@ -723,19 +773,29 @@ int main( int argc, char** argv )
 			env = path.substr( 0, index + 1 );
 
 		db = path.substr( index + 1 );
+
+		if( debug )
+			Logger().log("lsmcode: opening DB env=" + env + " db=" + db, LOG_INFO);
+
 		try
 		{
 			vpd = new VpdRetriever( env, db );
 		}
 		catch( exception& e )
 		{
+			Logger().log("lsmcode: failed to open VPD DB " + path +
+				     ": " + string(e.what()), LOG_ERR);
 			cout << "Unable to process vpd DB " << path << ". Possibly corrupted DB" << endl;
 			cout << "Please run vpdupdate command, before running lsmcode." << endl;
+			closelog();
 			return 1;
 		}
 	}
 	else
 	{
+		if( debug )
+			Logger().log("lsmcode: using default VPD DB path", LOG_INFO);
+
 		try
 		{
 			vpd = new VpdRetriever( );
@@ -743,12 +803,15 @@ int main( int argc, char** argv )
 		catch( exception& e )
 		{
 			string prefix( DEST_DIR );
+			Logger().log("lsmcode: failed to open default VPD DB: " +
+				     string(e.what()), LOG_ERR);
 			cout << "Please run " << prefix;
 			if( prefix[ prefix.length( ) - 1 ] != '/' )
 			{
 				cout << "/";
 			}
 			cout << "sbin/vpdupdate before running lsmcode." << endl;
+			closelog();
 			return 1;
 		}
 	}
@@ -761,9 +824,11 @@ int main( int argc, char** argv )
 		}
 		catch( VpdException& ve )
 		{
+			Logger().log("lsmcode: getComponentTree failed: " + string(ve.what()), LOG_ERR);
 			cout << "Error reading VPD DB: " << ve.what( ) << endl;
 			cout << "Please run vpdupdate command, before running lsmcode." << endl;
 			delete vpd;
+			closelog();
 			return 1;
 		}
 
@@ -772,6 +837,8 @@ int main( int argc, char** argv )
 
 	if( root != NULL )
 	{
+		if( debug )
+			Logger().log("lsmcode: component tree loaded successfully", LOG_INFO);
 		printVPD( root );
 		delete root;
 	}
@@ -781,5 +848,6 @@ int main( int argc, char** argv )
 		unlink( path.c_str( ) );
 	}
 
+	closelog();
 	return 0;
 }
