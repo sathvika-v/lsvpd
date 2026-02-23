@@ -26,6 +26,7 @@
 #include <libvpd-2/dataitem.hpp>
 #include <libvpd-2/system.hpp>
 #include <libvpd-2/vpdexception.hpp>
+#include <libvpd-2/logger.hpp>
 #include <platformcollector.hpp>
 
 #include <iostream>
@@ -45,6 +46,7 @@
 #include <fcntl.h>
 #include <cstring>
 #include <cerrno>
+#include <syslog.h>
 
 using namespace std;
 using namespace lsvpd;
@@ -385,6 +387,8 @@ int main( int argc, char** argv )
 	int index, first = 1;
 	int rc = 1;
 
+	openlog("lsvpd", LOG_PID | LOG_NDELAY, LOG_USER);
+
 	string platform = PlatformCollector::get_platform_name();
 
 	switch (PlatformCollector::platform_type) {
@@ -392,7 +396,9 @@ int main( int argc, char** argv )
 		rc = 0;
 	case PF_NULL:	/* Fall through */
 	case PF_ERROR:
+		Logger().log("lsvpd: unsupported platform detected: " + platform, LOG_ERR);
 		cout<< "lsvpd is not supported on the " << platform << " platform" << endl;
+		closelog();
 		return rc;
 	default:
 		;
@@ -413,7 +419,9 @@ int main( int argc, char** argv )
 	};
 
 	if (geteuid() != 0) {
+		Logger().log("lsvpd: must be run as root (euid=" + to_string(geteuid()) + ")", LOG_ERR);
 		cout << "Must be run as root!" << endl;
+		closelog();
 		return -1;
 	}
 
@@ -481,12 +489,20 @@ int main( int argc, char** argv )
 		string env, db;
 		int index;
 
+		if( debug )
+			Logger().log("lsvpd: using " + string(compressed ? "compressed " : "") +
+				     "DB path: " + path, LOG_INFO);
+
 		if( compressed )
 		{
 			gzFile gzf = gzopen( path.c_str( ), "rb" );
 			if( gzf == NULL )
 			{
+				int saved_errno = errno;
+				Logger().log("lsvpd: gzopen failed for " + path +
+					     ": " + strerror(saved_errno), LOG_ERR);
 				cout << "Failed to open database archive " << path << endl;
+				closelog();
 				return 1;
 			}
 
@@ -496,9 +512,13 @@ int main( int argc, char** argv )
 				       S_IRGRP | S_IWUSR | S_IRUSR | S_IROTH );
 			if( fd < 0 )
 			{
+				int saved_errno = errno;
 				gzclose( gzf );
+				Logger().log("lsvpd: open failed for decompressed DB " + path +
+					     ": " + strerror(saved_errno), LOG_ERR);
 				cout << "Failed to open file for uncompressed database archive"
 					<< endl;
+				closelog();
 				return 1;
 			}
 
@@ -519,8 +539,12 @@ int main( int argc, char** argv )
 			if( gzclose( gzf ) != 0 )
 			{
 				int err;
+				const char *gzerr = gzerror( gzf, &err );
+				Logger().log("lsvpd: gzclose/read error on " + path +
+					     ".gz: " + string(gzerr), LOG_ERR);
 				cout << "Error reading archive " << path << ".gz: " <<
-					gzerror( gzf, &err ) << endl;
+					gzerr << endl;
+				closelog();
 				return 1;
 			}
 		}
@@ -536,19 +560,28 @@ int main( int argc, char** argv )
 		}
 		db = path.substr( index + 1 );
 
+		if( debug )
+			Logger().log("lsvpd: opening DB env=" + env + " db=" + db, LOG_INFO);
+
 		try
 		{
 			vpd = new VpdRetriever( env, db );
 		}
 		catch( exception& e )
 		{
+			Logger().log("lsvpd: failed to open VPD DB " + path +
+				     ": " + string(e.what()), LOG_ERR);
 			cout << "Unable to process vpd DB " << path << ". Possibly corrupted DB" <<endl;
 			cout << "Please run vpdupdate command, before running lsvpd." << endl;
+			closelog();
 			return 1;
 		}
 	}
 	else
 	{
+		if( debug )
+			Logger().log("lsvpd: using default VPD DB path", LOG_INFO);
+
 		try
 		{
 			vpd = new VpdRetriever( );
@@ -556,12 +589,15 @@ int main( int argc, char** argv )
 		catch( exception& e )
 		{
 			string prefix( DEST_DIR );
+			Logger().log("lsvpd: failed to open default VPD DB: " +
+				     string(e.what()), LOG_ERR);
 			cout << "Please run " << prefix;
 			if( prefix[ prefix.length( ) - 1 ] != '/' )
 			{
 				cout << "/";
 			}
 			cout << "sbin/vpdupdate before running lsvpd." << endl;
+			closelog();
 			return 1;
 		}
 	}
@@ -575,6 +611,7 @@ int main( int argc, char** argv )
 		catch( VpdException& ve )
 		{
 			const char *expection = "Failed to fetch VPD DB, it may be corrupt";
+			Logger().log("lsvpd: getComponentTree failed: " + string(ve.what()), LOG_ERR);
 			cout << "Error reading VPD DB: " << ve.what( ) << endl;
 			if (strncmp(expection, ve.what(),strlen(expection)) == 0) {
 				string prefix( DEST_DIR );
@@ -586,6 +623,7 @@ int main( int argc, char** argv )
 				cout << "sbin/vpdupdate again, before running lsvpd." << endl;
 			}
 			delete vpd;
+			closelog();
 			return 1;
 		}
 
@@ -594,6 +632,8 @@ int main( int argc, char** argv )
 
 	if( root != NULL )
 	{
+		if( debug )
+			Logger().log("lsvpd: component tree loaded successfully", LOG_INFO);
 		printVPD( root );
 		delete root;
 	}
@@ -603,5 +643,6 @@ int main( int argc, char** argv )
 		unlink( path.c_str( ) );
 	}
 
+	closelog();
 	return 0;
 }
