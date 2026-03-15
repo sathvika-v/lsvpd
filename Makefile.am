@@ -92,6 +92,8 @@ install-exec-hook:
 		${DESTDIR}/etc/lsvpd/nvme_templates.conf
 	install -D --mode=644 cpu_mod_conv.conf \
 		${DESTDIR}/etc/lsvpd/cpu_mod_conv.conf
+	install -D --mode=644 io_adapter_ccin.conf \
+		${DESTDIR}/etc/lsvpd/io_adapter_ccin.conf
 
 EXTRA_DIST = $(man8_MANS) bootstrap.sh scsi_templates.conf cpu_mod_conv.conf \
-	     nvme_templates.conf vpdupdate.service.in
+	     nvme_templates.conf io_adapter_ccin.conf vpdupdate.service.in

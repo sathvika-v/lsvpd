@@ -30,6 +30,7 @@
 
 #define SCSI_TEMPLATES_FILE "/etc/lsvpd/scsi_templates.conf"
 #define NVME_TEMPLATES_FILE "/etc/lsvpd/nvme_templates.conf"
+#define IO_ADAPTER_CCIN_FILE "/etc/lsvpd/io_adapter_ccin.conf"
 
 #include <string>
 
@@ -130,6 +131,10 @@ namespace lsvpd
 		        int load_nvme_templates(const string& filename);
 			int interpretNVMEf1hLogPage(Component *fillMe, char *data);
 			int interpretNVMEMiLog(Component *fillMe, char *data);
+
+			// io adapter ccin/fc database
+			void applyIoAdapterInfo(Component* fillMe, int vendorId, int deviceId,
+					int subVendorId, int subDeviceId);
 
 			// scsi specific
 			int load_scsi_templates(const string&);
