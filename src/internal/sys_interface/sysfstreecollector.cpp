@@ -1788,6 +1788,11 @@ ERROR:
 				}
 				break;
 			}
+
+		/* Apply FC and CCIN from io_adapter_ccin.conf for all P11 IO adapters.
+		 * Edit the conf file to add/update FC and CCIN without a code change.
+		 */
+		applyIoAdapterInfo(fillMe, vendorId, deviceId, subVendorId, subDeviceId);
 	}
 
 

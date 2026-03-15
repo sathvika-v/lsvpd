@@ -1105,6 +1105,71 @@ namespace lsvpd
 		return 0;
 	}
 
+	/* applyIoAdapterInfo
+	 * @brief Scans io_adapter_ccin.conf line by line for a matching
+	 *   (vendor_id, device_id, sub_vendor_id, sub_device_id) entry and,
+	 *   if found, sets the FC and CCIN fields on fillMe directly.
+	 */
+	void SysFSTreeCollector::applyIoAdapterInfo(Component* fillMe,
+			int vendorId, int deviceId,
+			int subVendorId, int subDeviceId)
+	{
+		string line, vid_str, did_str, svid_str, sdid_str, fc, ccin;
+		Logger logger;
+
+		ifstream fin(IO_ADAPTER_CCIN_FILE);
+		if (!fin.is_open()) {
+			logger.log("Error opening IO adapter info file at: " +
+				   string(IO_ADAPTER_CCIN_FILE) +
+				   "; FC/CCIN data will not be available for PCI adapters",
+				   LOG_ERR);
+			return;
+		}
+
+		while (getline(fin, line)) {
+			if (line.empty() || line[0] == '#')
+				continue;
+
+			vid_str.clear(); did_str.clear();
+			svid_str.clear(); sdid_str.clear();
+
+			HelperFunctions::parseString(line, 1, vid_str);
+			HelperFunctions::parseString(line, 2, did_str);
+			HelperFunctions::parseString(line, 3, svid_str);
+			HelperFunctions::parseString(line, 4, sdid_str);
+
+			if (vid_str.empty() || did_str.empty())
+				continue;
+
+			if ((uint32_t)strtol(vid_str.c_str(), NULL, 16) != (uint32_t)vendorId)
+				continue;
+			if ((uint32_t)strtol(did_str.c_str(), NULL, 16) != (uint32_t)deviceId)
+				continue;
+
+			uint32_t svid = svid_str.empty() ? 0 :
+			                (uint32_t)strtol(svid_str.c_str(), NULL, 16);
+			uint32_t sdid = sdid_str.empty() ? 0 :
+			                (uint32_t)strtol(sdid_str.c_str(), NULL, 16);
+
+			if (svid != 0 && svid != (uint32_t)subVendorId)
+				continue;
+			if (sdid != 0 && sdid != (uint32_t)subDeviceId)
+				continue;
+
+			/* Match: parse FC and CCIN from columns 5 and 6 and apply */
+			HelperFunctions::parseString(line, 5, fc);
+			HelperFunctions::parseString(line, 6, ccin);
+
+			if (!fc.empty())
+				fillMe->mFeatureCode.setValue(fc, 95, __FILE__, __LINE__);
+			if (!ccin.empty())
+				fillMe->addDeviceSpecific("CC", "Customer Card ID Number",
+						ccin, 95);
+			return;
+		}
+	}
+
+
 
 int SysFSTreeCollector::interpretNVMEMiLog(Component *fillMe, char *data)
 {
