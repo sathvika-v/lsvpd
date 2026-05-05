@@ -87,6 +87,7 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %config %{_sysconfdir}/lsvpd/scsi_templates.conf
 %config %{_sysconfdir}/lsvpd/nvme_templates.conf
 %config %{_sysconfdir}/lsvpd/cpu_mod_conv.conf
+%config %{_sysconfdir}/lsvpd/io_adapter_ccin.conf
 %dir %{_sysconfdir}/lsvpd
 %{_unitdir}/vpdupdate.service
 
