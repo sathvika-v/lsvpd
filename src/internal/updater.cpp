@@ -59,6 +59,12 @@
 using namespace lsvpd;
 using namespace std;
 
+#define LOG_AND_PRINT(logger, msg, level) \
+	do { \
+		(logger).log((msg), (level)); \
+		cout << (msg) << endl; \
+	} while(0)
+
 int initializeDB( bool limitSCSI );
 int storeComponents( System* root, VpdDbEnv& db );
 int storeComponents( Component* root, VpdDbEnv& db );
@@ -174,17 +180,22 @@ int main( int argc, char** argv )
 	int index = 0, rc = 1;
 	bool limitSCSISize = false;
 	VpdDbEnv::UpdateLock *lock;
+	Logger logger("vpdupdate:");
+
+	logger.log( "Starting vpdupdate command", LOG_DEBUG );
+
 	string platform = PlatformCollector::get_platform_name();
+	logger.log( "Detected platform: " + platform, LOG_DEBUG );
 
 	switch (PlatformCollector::platform_type) {
 	case PF_PSERIES_KVM_GUEST: /* Fall through */
 		rc = 0;
 	case PF_NULL:	/* Fall through */
 	case PF_ERROR:
-		cout<< "vpdupdate is not supported on the " <<
-			platform << " platform" << endl;
+		LOG_AND_PRINT(logger, "vpdupdate is not supported on the " + platform + " platform", LOG_WARNING);
 		return rc;
 	default:
+		logger.log( "Platform supported, continuing", LOG_DEBUG );
 		;
 	}
 
@@ -236,18 +247,20 @@ int main( int argc, char** argv )
 
 	/* Test to see if running as root: */
 	if (!isRoot()) {
-		cout << "vpdupdate must be run as root" << endl;
+		LOG_AND_PRINT(logger, "vpdupdate must be run as root", LOG_WARNING);
 		return -1;
 	}
 
-	Logger l;
-
-	l.log( "vpdupdate: Constructing full devices database", LOG_NOTICE );
+	logger.log( "Constructing full devices database", LOG_NOTICE );
 	logProcessHierarchy();
 	rc = initializeDB( limitSCSISize );
 
+	logger.log( "Database initialization returned: " + to_string(rc), LOG_DEBUG );
+
 	__lsvpdFini();
 	cleanupSpyreFiles(env);
+
+	logger.log( "Command completed", LOG_DEBUG );
 	return rc;
 }
 
@@ -500,58 +513,70 @@ int initializeDB( bool limitSCSI )
 	VpdDbEnv::UpdateLock *lock;
 	System * root;
 	int ret;
+	Logger logger("vpdupdate:");
 
-	if( ensureEnv( env, file ) != 0 )
+	logger.log( "initializeDB() starting", LOG_DEBUG );
+
+	if( ensureEnv( env, file ) != 0 ) {
+		logger.log( "ensureEnv() failed", LOG_DEBUG );
 		return -1;
+	}
+	logger.log( "Database environment verified", LOG_DEBUG );
 
 	string fullPath = env + "/" + file;
 	string spyreFullPath = env + "/" + SPYRE_DB_FILENAME;
 
+	logger.log( "Initializing Spyre database", LOG_DEBUG );
 	if (__spyreDbInit() != 0) {
-		Logger l;
-		l.log("Failed to initialize spyre database.", LOG_ERR);
+		logger.log("Failed to initialize spyre database.", LOG_ERR);
 		return -1;
 	}
+	logger.log( "Spyre database initialized", LOG_DEBUG );
 
 	if (access(fullPath.c_str(), F_OK) == 0) {
-		Logger l;
-		l.log("Extracting Spyre data from existing vpd.db", LOG_NOTICE);
+		logger.log("Extracting Spyre data from existing vpd.db", LOG_NOTICE);
 		extractSpyreData();
+		logger.log( "Spyre data extraction completed", LOG_DEBUG );
 	}
 
+	logger.log( "Acquiring database lock", LOG_DEBUG );
 	lock = new VpdDbEnv::UpdateLock(env, file, false);
+
+	logger.log( "Removing old archive databases", LOG_DEBUG );
 	removeOldArchiveDB( );
+
+	logger.log( "Archiving current database", LOG_DEBUG );
 	archiveDB( fullPath );
-	/* The db is now archived so when signal handler runs it should remove
-	 * any db it finds */
 	dblock = lock;
 
+	logger.log( "Creating Gatherer for device collection", LOG_DEBUG );
 	Gatherer info( limitSCSI );
+
+	logger.log( "Initializing VPD database environment", LOG_DEBUG );
 	ret = __lsvpdInit(lock);
 
 	if ( ret != 0 ) {
-		Logger l;
-		l.log( "Could not allocate memory for the VPD database.", LOG_ERR);
+		logger.log( "Could not allocate memory for the VPD database.", LOG_ERR);
 		__spyreDbFini();
 		return ret;
 	}
+	logger.log( "VPD database environment initialized", LOG_DEBUG );
 
+	logger.log( "Gathering component tree from system", LOG_DEBUG );
 	root = info.getComponentTree( );
+	logger.log( "Component tree gathered successfully", LOG_DEBUG );
 
-	/*
-	   coutd << "After Merge: " << endl;
-	   info.diplayInheritanceTree(root);
-	   */
-
+	logger.log( "Storing components to database", LOG_DEBUG );
 	ret = storeComponents( root, *db );
 
-	if( ret != 0 )
-	{
-		Logger l;
-		l.log( "Saving components to database failed.", LOG_ERR );
+	if( ret != 0 ) {
+		logger.log( "Saving components to database failed.", LOG_ERR );
+	} else {
+		logger.log( "Components stored successfully", LOG_DEBUG );
 	}
 
 	delete root;
+	logger.log( "initializeDB() completed", LOG_DEBUG );
 	return ret;
 }
 
