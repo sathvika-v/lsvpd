@@ -1176,8 +1176,24 @@ ERROR:
 		 * Loop thru each device and build up YL field.  If YL not easily
 		 * obtained, build it for certain buses
 		 */
+		const string rtasVpdPrefix = string(DEVTREEPATH) + "/rtas/";
 		for( i = sysdevs.begin( ), end = sysdevs.end( ); i != end; ++i ) {
 			devC = *i;
+
+			/* Skip fillQuickVPD for RTAS VPD components: their deviceTreeNode is
+			 * an artificial path (/proc/device-tree/rtas/<loc-code>) that does not
+			 * exist on disk.  The walk-up in fillQuickVPD reaches
+			 * /proc/device-tree/ibm,loc-code and overwrites the slot-level
+			 * location (already set from the VINI YL field) with a chassis-level
+			 * location, breaking invscout location matching for those FRUs.
+			 */
+			if (devC->idNode.dataValue.compare(0, rtasVpdPrefix.length(),
+							  rtasVpdPrefix) == 0
+			    && devC->mPhysicalLocation.dataValue.length() > 0) {
+				if (devC->devBus.dataValue == "scsi")
+					buildSCSILocCode(devC, sysdevs);
+				continue;
+			}
 
 			//Deprecated behavior: Get Yl from ibm,loc-code if possible
 			/* bpeters: basic loc-code discovery now iterates up the device path,
